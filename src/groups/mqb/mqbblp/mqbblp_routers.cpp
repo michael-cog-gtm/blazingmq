@@ -463,7 +463,7 @@ unsigned int Routers::AppContext::finalize()
 
                 bool isFirstTime = group.add(&subscription);
 
-                if (group.d_ci.size() == 1) {
+                if (!group.d_ci.empty()) {
                     int n = subscription.d_ci.consumerPriorityCount();
 
                     if (isFirstTime) {
@@ -600,7 +600,7 @@ void Routers::AppContext::generate(bmqp_ctrlmsg::StreamParameters* out) const
          ++itGroup) {
         const PriorityGroup& group = d_groups.value(itGroup);
 
-        BSLS_ASSERT_SAFE(group.d_highestSubscriptions.size() > 0);
+        BSLS_ASSERT_SAFE(!group.d_highestSubscriptions.empty());
 
         out->subscriptions().resize(n + 1);
         bmqp_ctrlmsg::Subscription& subscription = out->subscriptions()[n];
