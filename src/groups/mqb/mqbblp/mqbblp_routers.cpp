@@ -463,7 +463,10 @@ unsigned int Routers::AppContext::finalize()
 
                 bool isFirstTime = group.add(&subscription);
 
-                if (!group.d_ci.empty()) {
+                // Only subscriptions at the group's highest priority (the
+                // sole entry in 'd_ci') are eligible for delivery; lower
+                // priorities are standbys and must not be selected.
+                if (group.d_ci.size() == 1) {
                     int n = subscription.d_ci.consumerPriorityCount();
 
                     if (isFirstTime) {
