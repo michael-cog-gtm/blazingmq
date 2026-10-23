@@ -356,7 +356,7 @@ class H(BaseHTTPRequestHandler):
             stop_flow(); start_flow(); return self._json({"ok": True})
         if self.path.startswith("/api/reset"):
             with LOCK:
-                S["orders"].clear(); S["by_id"].clear(); S["seq"] = 0
+                S["orders"].clear(); S["by_id"].clear()  # keep seq: IDs must never repeat (late fills)
                 S["page"].update(state="idle", due=None, fired_at=None, result=None)
                 for e in S["engines"].values():
                     e["fills"] = 0
