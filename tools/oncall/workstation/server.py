@@ -272,6 +272,32 @@ def autopage_thread():
             page_oncall()
 
 
+DEPLOY = {"state": "idle", "branch": None, "commit": None, "log": "", "started": None}
+
+
+def deploy_thread(branch):
+    DEPLOY.update(state="building", branch=branch, log="", started=time.time())
+    log_alert("INFO", "DEPLOY %s: rebuilding broker from branch and restarting" % branch)
+    steps = [["git", "-C", ROOT, "checkout", "-q", branch, "--", "src"],
+             ["cmake", "--build", os.path.join(ROOT, "build", "blazingmq"), "--target", "bmqbrkr"],
+             [os.path.join(ROOT, "tools", "oncall", "run-local-broker.sh"), "stop"],
+             [os.path.join(ROOT, "tools", "oncall", "run-local-broker.sh"), "start"]]
+    for cmd in steps:
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            DEPLOY["log"] += "$ %s\n%s" % (" ".join(cmd[-3:]), (p.stdout + p.stderr)[-400:])
+            if p.returncode != 0:
+                DEPLOY.update(state="failed")
+                log_alert("ERR", "DEPLOY %s failed at: %s" % (branch, " ".join(cmd[-3:])))
+                return
+        except Exception as e:
+            DEPLOY.update(state="failed", log=DEPLOY["log"] + str(e))
+            log_alert("ERR", "DEPLOY %s failed: %s" % (branch, e))
+            return
+    DEPLOY.update(state="done", commit=git("rev-parse", "--short", branch))
+    log_alert("INFO", "DEPLOY %s: broker restarted on %s — engines reconnecting" % (branch, DEPLOY["commit"]))
+
+
 def snapshot():
     with LOCK:
         orders = [dict(o) for o in list(S["orders"])[:40]]
@@ -283,8 +309,9 @@ def snapshot():
     for k, t in ENGINES.items():
         engines[k]["up"] = t.alive()
     return {"now": time.time(), "broker": broker_up(), "uri": URI, "flow": flow, "orders": orders, "quotes": quotes,
-            "engines": engines, "recon": recon(), "alerts": alerts, "page": page, "autopage": autopage,
-            "head": {"commit": git("rev-parse", "--short", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD")}}
+            "engines": engines, "recon": recon(), "alerts": alerts, "page": page, "autopage": autopage, "deploy": dict(DEPLOY),
+            "head": ({"commit": DEPLOY["commit"], "branch": DEPLOY["branch"]} if DEPLOY.get("commit") else
+                     {"commit": git("rev-parse", "--short", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD")})}
 
 
 class H(BaseHTTPRequestHandler):
@@ -315,6 +342,12 @@ class H(BaseHTTPRequestHandler):
             return self._json({"result": page_oncall()})
         if self.path.startswith("/api/flow"):
             S["flow"] = bool(body.get("on", True)); return self._json({"flow": S["flow"]})
+        if self.path.startswith("/api/deploy"):
+            branch = re.sub(r"[^\w./\-]", "", body.get("branch") or "main")
+            if DEPLOY["state"] == "building":
+                return self._json({"error": "deploy in progress"}, 409)
+            threading.Thread(target=deploy_thread, args=(branch,), daemon=True).start()
+            return self._json({"ok": True, "branch": branch})
         if self.path.startswith("/api/autopage"):
             S["autopage"] = bool(body.get("on", True)); return self._json({"autopage": S["autopage"]})
         if self.path.startswith("/api/reconnect"):
