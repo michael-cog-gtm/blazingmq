@@ -284,8 +284,10 @@ def deploy_thread(branch):
              [os.path.join(ROOT, "tools", "oncall", "run-local-broker.sh"), "start"]]
     for cmd in steps:
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-            DEPLOY["log"] += "$ %s\n%s" % (" ".join(cmd[-3:]), (p.stdout + p.stderr)[-400:])
+            # the broker start script leaves a child running: never attach pipes to it
+            with open("/tmp/argus-deploy.log", "a") as lf:
+                p = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True, timeout=900)
+            DEPLOY["log"] += "$ %s -> rc=%d\n" % (" ".join(cmd[-3:]), p.returncode)
             if p.returncode != 0:
                 DEPLOY.update(state="failed")
                 log_alert("ERR", "DEPLOY %s failed at: %s" % (branch, " ".join(cmd[-3:])))
