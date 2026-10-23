@@ -45,3 +45,5 @@ This fork is used for on-call and engineering demos; the rules below keep sessio
 4. Prove it: rerun the previously failing cases, run the component's full test binary, and rerun the end-to-end broker check.
 5. Open a pull request on a `devin/` branch with a DCO sign-off (`git commit -s`). Describe impact, root cause, fix, and the evidence. Do not merge.
 6. Report back in the Slack thread the alert came from: short impact statement, root cause, evidence, PR link, suggested follow-ups.
+
+- Operations console ("BMQ MON", terminal-style UI over the same probe): `tools/oncall/console/server.py` serves http://localhost:8787; `PROBE <GO>` runs tools/oncall/priority-check.sh against the live broker; incident links come from tools/oncall/console/incident.json.

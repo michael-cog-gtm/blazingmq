@@ -1,0 +1,13 @@
+{
+  "id": "INC-2026-1022-07",
+  "severity": "SEV-2",
+  "title": "Priority routing violation — standby consumers receiving live traffic",
+  "signal": "bmq.queue.consumer.standby_messages_delivered > 0 for 15 min (expected 0)",
+  "impact": "standby workers process live orders in parallel with primaries (duplicate-processing risk)",
+  "opened_at": "2026-10-22T21:33:52Z",
+  "links": {
+    "slack_thread": "https://coggtm.slack.com/archives/C0CBZPW82E4/p1792704832178919",
+    "devin_session": "https://devin-gtm.devinenterprise.com/sessions/3cccb0af0019416f946d7a135227357c",
+    "pull_request": "https://github.com/michael-cog-gtm/blazingmq/pull/1"
+  }
+}
