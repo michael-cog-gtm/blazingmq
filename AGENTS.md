@@ -47,3 +47,4 @@ This fork is used for on-call and engineering demos; the rules below keep sessio
 6. Report back in the Slack thread the alert came from: short impact statement, root cause, evidence, PR link, suggested follow-ups.
 
 - Operations console ("BMQ MON", terminal-style UI over the same probe): `tools/oncall/console/server.py` serves http://localhost:8787; `PROBE <GO>` runs tools/oncall/priority-check.sh against the live broker; incident links come from tools/oncall/console/incident.json.
+- Trading workstation ("ARGUS", terminal-style UI whose order flow runs on BlazingMQ): `tools/oncall/workstation/server.py` serves http://localhost:8790; it keeps a bmqtool producer and two bmqtool consumers (NY-PRIMARY consumerPriority 10, NJ-DR-STANDBY consumerPriority 1) on an in-memory priority queue; RECON BREAK means the standby executed live orders; `PAGE <GO>` runs tools/oncall/send-alert.py.
