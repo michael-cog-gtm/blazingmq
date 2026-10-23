@@ -533,6 +533,145 @@ static void test4_generate()
     }
 }
 
+static void test5_priorityStandby()
+// ------------------------------------------------------------------------
+//  Testing that lower-priority (standby) consumers never receive messages
+//  while a higher-priority consumer for the same expression is present.
+//
+//  Two handles, same (empty) expression: handle1 at priority 10 (primary)
+//  and handle2 at priority 1 (standby).  Only the primary must be in the
+//  round-robin selection; every iteration must select handle1.
+// ------------------------------------------------------------------------
+{
+    bmqp::SchemaLearner schemaLearner(bmqtst::TestHelperUtil::allocator());
+    mqbblp::Routers::QueueRoutingContext queueContext(
+        schemaLearner,
+        bmqtst::TestHelperUtil::allocator());
+    unsigned int subQueueId = 13;
+    TestStorage  storage(subQueueId, bmqtst::TestHelperUtil::allocator());
+
+    bsl::string  appId("foo", bmqtst::TestHelperUtil::allocator());
+    unsigned int upstreamSubQueueId = 1;
+
+    const int k_PRIMARY_PRIORITY = 10;
+    const int k_STANDBY_PRIORITY = 1;
+    const int k_PRIORITY_COUNT   = 1;
+
+    bmqp_ctrlmsg::StreamParameters primaryParams(
+        bmqtst::TestHelperUtil::allocator());
+    bmqp_ctrlmsg::StreamParameters standbyParams(
+        bmqtst::TestHelperUtil::allocator());
+
+    primaryParams.appId() = appId;
+    primaryParams.subscriptions().resize(1);
+    {
+        bmqp_ctrlmsg::Subscription& subscription =
+            primaryParams.subscriptions()[0];
+        subscription.sId()        = 33;
+        subscription.expression() = bmqp_ctrlmsg::Expression();
+        subscription.consumers().resize(1);
+        bmqp_ctrlmsg::ConsumerInfo& ci = subscription.consumers()[0];
+        ci.consumerPriority()          = k_PRIMARY_PRIORITY;
+        ci.consumerPriorityCount()     = k_PRIORITY_COUNT;
+        ci.maxUnconfirmedMessages()    = 1024;
+        ci.maxUnconfirmedBytes()       = 1024;
+    }
+
+    standbyParams.appId() = appId;
+    standbyParams.subscriptions().resize(1);
+    {
+        bmqp_ctrlmsg::Subscription& subscription =
+            standbyParams.subscriptions()[0];
+        subscription.sId()        = 44;
+        subscription.expression() = bmqp_ctrlmsg::Expression();
+        subscription.consumers().resize(1);
+        bmqp_ctrlmsg::ConsumerInfo& ci = subscription.consumers()[0];
+        ci.consumerPriority()          = k_STANDBY_PRIORITY;
+        ci.consumerPriorityCount()     = k_PRIORITY_COUNT;
+        ci.maxUnconfirmedMessages()    = 1024;
+        ci.maxUnconfirmedBytes()       = 1024;
+    }
+
+    mqbmock::QueueHandle primary = storage.getHandle();
+    mqbmock::QueueHandle standby = storage.getHandle();
+
+    bmqp_ctrlmsg::SubQueueIdInfo primaryInfo(
+        bmqtst::TestHelperUtil::allocator());
+    bmqp_ctrlmsg::SubQueueIdInfo standbyInfo(
+        bmqtst::TestHelperUtil::allocator());
+
+    primaryInfo.appId() = appId;
+    primaryInfo.subId() = subQueueId;
+    standbyInfo.appId() = appId;
+    standbyInfo.subId() = subQueueId + 1;
+
+    primary.registerSubStream(primaryInfo,
+                              upstreamSubQueueId,
+                              mqbi::QueueCounts(1, 0));
+    standby.registerSubStream(standbyInfo,
+                              upstreamSubQueueId,
+                              mqbi::QueueCounts(1, 0));
+
+    primary.setStreamParameters(primaryParams);
+    standby.setStreamParameters(standbyParams);
+
+    {
+        mqbblp::Routers::AppContext appContext(
+            &queueContext,
+            bmqtst::TestHelperUtil::allocator());
+        bmqu::MemOutStream errorStream(bmqtst::TestHelperUtil::allocator());
+
+        appContext.load(&primary,
+                        &errorStream,
+                        primaryInfo.subId(),
+                        upstreamSubQueueId,
+                        primaryParams,
+                        0);
+        BMQTST_ASSERT_EQ(errorStream.str(), "");
+        appContext.load(&standby,
+                        &errorStream,
+                        standbyInfo.subId(),
+                        upstreamSubQueueId,
+                        standbyParams,
+                        0);
+        BMQTST_ASSERT_EQ(errorStream.str(), "");
+
+        // Only the highest priority counts towards the selection list.
+        BMQTST_ASSERT_EQ(appContext.finalize(), size_t(k_PRIORITY_COUNT));
+        appContext.registerSubscriptions();
+
+        mqbblp::Routers::RoundRobin router(appContext.d_priorities);
+
+        const int k_NUM_MESSAGES = 6;
+        int       primaryCount   = 0;
+        int       standbyCount   = 0;
+
+        for (int i = 0; i < k_NUM_MESSAGES; ++i) {
+            Visitor visitor;
+            BMQTST_ASSERT_EQ(router.iterateGroups(visitor),
+                             mqbblp::Routers::e_SUCCESS);
+            if (visitor.d_handle == &primary) {
+                ++primaryCount;
+            }
+            else if (visitor.d_handle == &standby) {
+                ++standbyCount;
+            }
+        }
+
+        BMQTST_ASSERT_EQ(primaryCount, k_NUM_MESSAGES);
+        BMQTST_ASSERT_EQ(standbyCount, 0);
+    }
+
+    BMQTST_ASSERT_EQ(standby.unregisterSubStream(standbyInfo,
+                                                 mqbi::QueueCounts(1, 0),
+                                                 false),
+                     true);
+    BMQTST_ASSERT_EQ(primary.unregisterSubStream(primaryInfo,
+                                                 mqbi::QueueCounts(1, 0),
+                                                 false),
+                     true);
+}
+
 // ============================================================================
 //                                 MAIN PROGRAM
 // ----------------------------------------------------------------------------
@@ -550,6 +689,7 @@ int main(int argc, char* argv[])
     case 2: test2_priority(); break;
     case 3: test3_parse(); break;
     case 4: test4_generate(); break;
+    case 5: test5_priorityStandby(); break;
     default: {
         cerr << "WARNING: CASE '" << _testCase << "' NOT FOUND." << endl;
         bmqtst::TestHelperUtil::testStatus() = -1;
