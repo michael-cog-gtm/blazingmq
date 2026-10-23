@@ -42,9 +42,26 @@ This fork is used for on-call and engineering demos; the rules below keep sessio
 1. Reproduce before you theorize: find and run the test (or the broker check) that shows the reported behaviour, and quote its output.
 2. Root-cause in code: name the file, function and lines, and the commit that introduced the change (`git log -p -- <file>`).
 3. Keep the fix minimal and in the code path itself. Add or extend a unit test that would have caught the regression.
-4. Prove it: rerun the previously failing cases, run the component's full test binary, and rerun the end-to-end broker check.
+4. Prove it: rerun the previously failing cases, run the component's full test binary, rerun the end-to-end broker check, and show the fix on the ARGUS workstation (section below): before on `main`, after on your branch, recorded in the browser.
 5. Open a pull request on a `devin/` branch with a DCO sign-off (`git commit -s`). Describe impact, root cause, fix, and the evidence. Do not merge.
 6. Report back in the Slack thread the alert came from: short impact statement, root cause, evidence, PR link, suggested follow-ups.
 
 - Operations console ("BMQ MON", terminal-style UI over the same probe): `tools/oncall/console/server.py` serves http://localhost:8787; `PROBE <GO>` runs tools/oncall/priority-check.sh against the live broker; incident links come from tools/oncall/console/incident.json.
-- Trading workstation ("ARGUS", terminal-style UI whose order flow runs on BlazingMQ): `tools/oncall/workstation/server.py` serves http://localhost:8790; it keeps a bmqtool producer and two bmqtool consumers (NY-PRIMARY consumerPriority 10, NJ-DR-STANDBY consumerPriority 1) on an in-memory priority queue; RECON BREAK means the standby executed live orders; `PAGE <GO>` runs tools/oncall/send-alert.py.
+- Trading workstation ("ARGUS", terminal-style UI whose order flow runs on BlazingMQ): see the next section.
+
+## ARGUS workstation (tools/oncall/workstation)
+
+`python3 tools/oncall/workstation/server.py --port 8790 --period 2.5 --paused` serves http://localhost:8790 against the local broker
+(start the broker first). It keeps one bmqtool producer and two bmqtool consumers — NY-PRIMARY (consumerPriority 10) and
+NJ-DR-STANDBY (consumerPriority 1) — on an in-memory priority queue and shows which engine executed each order.
+`--paused` starts pre-open (no generated orders). On a correct broker every fill is NY-PRIMARY and panel 4 says RECON CLEAN;
+if the standby executes live orders panel 4 says RECON BREAK and, with AUTOPAGE on and `SLACK_WEBHOOK_URL` set, it pages #bmq-oncall.
+
+Commands (type in the command line, `<GO>` = Enter): `FLOW ON|OFF` start/stop generated orders · `BUY|SELL <qty> <ticker>` send one
+order · `RECON` refresh · `AUTOPAGE ON|OFF` arm/disarm paging · `DEPLOY <branch>` rebuild the broker (`bmqbrkr` target) from that
+branch's `src/` and restart it, engines reconnect by themselves (key bar shows DEPLOYING until done, ~30-90 s) · `RESET` clear the
+blotter · `RECONNECT` · `HELP`. Only the `src/` tree is swapped by DEPLOY, so the workstation keeps running; `git status` afterwards.
+
+When you are the on-call session proving a fix: never set `SLACK_WEBHOOK_URL`, type `AUTOPAGE OFF <GO>` first, then record in the
+browser: `DEPLOY main <GO>` → `FLOW ON <GO>` → RECON BREAK (screenshot) → `DEPLOY <your branch> <GO>` → `RESET <GO>` → fills all at
+NY-PRIMARY, standby 0, RECON CLEAN (screenshot). State is at http://localhost:8790/api/state if you need to script a check.
