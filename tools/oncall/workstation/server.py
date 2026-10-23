@@ -39,6 +39,8 @@ S = {
                 "NJ-DR-STANDBY": {"priority": 1, "fills": 0, "up": False, "role": "STANDBY"}},
     "alerts": deque(maxlen=50),
     "flow": True,
+    "autopage": True,
+    "page": {"state": "idle", "due": None, "fired_at": None, "result": None},   # idle | countdown | paged
     "seq": 0,
     "started": time.time(),
 }
@@ -217,18 +219,57 @@ def recon():
             "standby_share": round(100.0 * bys / len(filled)) if filled else 0}
 
 
+AUTOPAGE_MIN_STANDBY = int(os.environ.get("ARGUS_AUTOPAGE_MIN_STANDBY", "3"))   # standby fills in the recent window
+AUTOPAGE_DELAY = int(os.environ.get("ARGUS_AUTOPAGE_DELAY", "15"))               # seconds of countdown
+
+
 def page_oncall():
     env = dict(os.environ)
     if "BMQ_SLACK_WEBHOOK_URL" in env and "SLACK_WEBHOOK_URL" not in env:
         env["SLACK_WEBHOOK_URL"] = env["BMQ_SLACK_WEBHOOK_URL"]
+    with LOCK:
+        recent = [o for o in list(S["orders"]) if o["fills"]][:6]
+    env["ALERT_POSTED"] = str(len(recent))
+    env["ALERT_PRIMARY"] = str(sum(1 for o in recent if "NY-PRIMARY" in o["fills"]))
+    env["ALERT_STANDBY"] = str(sum(1 for o in recent if "NJ-DR-STANDBY" in o["fills"]))
+    env["ALERT_ORDERS_PRIMARY"] = " ".join(o["id"] for o in reversed(recent) if "NY-PRIMARY" in o["fills"])
+    env["ALERT_ORDERS_STANDBY"] = " ".join(o["id"] for o in reversed(recent) if "NJ-DR-STANDBY" in o["fills"])
+    env["ALERT_SOURCE"] = "ARGUS workstation reconciliation monitor"
+    env["ALERT_QUEUE"] = URI.replace("bmq://", "")
+    with LOCK:
+        S["page"].update(state="paged", due=None, fired_at=time.time())
     try:
         p = subprocess.run(["python3", ALERT], env=env, capture_output=True, text=True, timeout=30)
         out = (p.stdout + p.stderr).strip().splitlines()
         msg = out[-1] if out else "alert sender produced no output"
     except Exception as e:
         msg = "alert failed: %s" % e
-    log_alert("SEV-2", "paged on-call: priority routing violation — standby consumers receiving live traffic (%s)" % msg)
+    log_alert("SEV-2", "paged on-call in #bmq-oncall: priority routing violation — standby consumers receiving live traffic (%s)" % msg)
+    with LOCK:
+        S["page"]["result"] = msg
     return msg
+
+
+def autopage_thread():
+    while True:
+        time.sleep(1)
+        if not S["autopage"]:
+            continue
+        r = recon()
+        with LOCK:
+            pg = S["page"]
+            if pg["state"] == "idle" and r["recent_standby"] >= AUTOPAGE_MIN_STANDBY:
+                pg.update(state="countdown", due=time.time() + AUTOPAGE_DELAY)
+                fire = False
+            elif pg["state"] == "countdown":
+                if r["recent_standby"] < AUTOPAGE_MIN_STANDBY:
+                    pg.update(state="idle", due=None)
+                fire = pg["due"] is not None and time.time() >= pg["due"]
+            else:
+                fire = False
+        if fire:
+            log_alert("SEV-2", "reconciliation break persisted %ds — raising SEV-2 and paging on-call" % AUTOPAGE_DELAY)
+            page_oncall()
 
 
 def snapshot():
@@ -238,10 +279,11 @@ def snapshot():
         engines = {k: dict(v) for k, v in S["engines"].items()}
         alerts = list(S["alerts"])[:30]
         flow = S["flow"]
+        page = dict(S["page"]); autopage = S["autopage"]
     for k, t in ENGINES.items():
         engines[k]["up"] = t.alive()
     return {"now": time.time(), "broker": broker_up(), "uri": URI, "flow": flow, "orders": orders, "quotes": quotes,
-            "engines": engines, "recon": recon(), "alerts": alerts,
+            "engines": engines, "recon": recon(), "alerts": alerts, "page": page, "autopage": autopage,
             "head": {"commit": git("rev-parse", "--short", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD")}}
 
 
@@ -273,11 +315,14 @@ class H(BaseHTTPRequestHandler):
             return self._json({"result": page_oncall()})
         if self.path.startswith("/api/flow"):
             S["flow"] = bool(body.get("on", True)); return self._json({"flow": S["flow"]})
+        if self.path.startswith("/api/autopage"):
+            S["autopage"] = bool(body.get("on", True)); return self._json({"autopage": S["autopage"]})
         if self.path.startswith("/api/reconnect"):
             stop_flow(); start_flow(); return self._json({"ok": True})
         if self.path.startswith("/api/reset"):
             with LOCK:
                 S["orders"].clear(); S["by_id"].clear(); S["seq"] = 0
+                S["page"].update(state="idle", due=None, fired_at=None, result=None)
                 for e in S["engines"].values():
                     e["fills"] = 0
             return self._json({"ok": True})
@@ -295,6 +340,7 @@ def main():
     else:
         log_alert("WARN", "broker not reachable on tcp://localhost:30114 — start it with tools/oncall/run-local-broker.sh start")
     threading.Thread(target=watchdog_thread, daemon=True).start()
+    threading.Thread(target=autopage_thread, daemon=True).start()
     if a.period > 0:
         threading.Thread(target=flow_thread, args=(a.period,), daemon=True).start()
     print("ARGUS workstation on http://localhost:%d  queue %s" % (a.port, URI), flush=True)

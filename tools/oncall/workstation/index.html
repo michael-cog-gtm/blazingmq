@@ -54,8 +54,11 @@ function render(){const s=S;if(!s)return;flowOn=s.flow;$('#clock').textContent=f
   <table><tr><td class="muted">orders sent</td><td class="n">${r.sent}</td><td class="muted">filled</td><td class="n">${r.filled}</td></tr>
   <tr><td class="muted">by NY-PRIMARY</td><td class="n ok">${r.by_primary}</td><td class="muted">by NJ-DR-STANDBY</td><td class="n ${r.by_standby?'bad':'ok'}">${r.by_standby}</td></tr>
   <tr><td class="muted">standby share</td><td class="n ${r.by_standby?'bad':'ok'}">${r.standby_share}%</td><td class="muted">expected</td><td class="n">0%</td></tr></table>
-  <div style="margin-top:6px">${r.break?`<span class="bad">${r.recent_standby} of last ${r.recent} fills executed at the DR site — duplicate-processing risk.</span><br><button class="act" onclick="page()">PAGE ON-CALL (SEV-2) &lt;GO&gt;</button>`:'<span class="ok">all fills at primary site; standby idle.</span>'}</div>`;
+  <div style="margin-top:6px">${r.break?`<span class="bad">${r.recent_standby} of last ${r.recent} fills executed at the DR site — duplicate-processing risk.</span><br>${pageLine(s)}`:'<span class="ok">all fills at primary site; standby idle.</span>'}</div>`;
  $('#alerts').innerHTML=s.alerts.map(a=>`<div><span class="muted">${fmt(a.ts)}</span> <b class="${a.kind==='SEV-2'||a.kind==='ERR'?'bad':(a.kind==='WARN'?'warn':'ok')}">${a.kind}</b> <span style="color:var(--white)">${a.text}</span></div>`).join('')||'<span class="muted">no alerts</span>';}
+function pageLine(s){const p=s.page;if(p.state==='paged'){return `<span class="bad hl">SEV-2 RAISED</span> <span style="color:var(--white)">on-call paged in #bmq-oncall at ${fmt(p.fired_at)} UTC</span> <span class="muted">(${p.result||'…'})</span>`}
+ if(p.state==='countdown'){const left=Math.max(0,Math.round(p.due-s.now));return `<span class="bad">SEV-2 — paging on-call in ${left}s…</span> <span class="muted">(F2 to page now · AUTOPAGE OFF to cancel)</span>`}
+ return `<button class="act" onclick="page()">PAGE ON-CALL (SEV-2) &lt;GO&gt;</button> <span class="muted">${s.autopage?'auto-page armed':'auto-page off'}</span>`}
 async function load(){try{S=await (await fetch('/api/state')).json();render()}catch(e){}}
 async function post(p,b){await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});await load()}
 async function page(){await post('/api/page')}
@@ -63,8 +66,8 @@ function setCmd(c){$('#cmd').value=c;runCmd()}
 function runCmd(){const raw=$('#cmd').value.trim().toUpperCase().replace(/<GO>/,'').trim();const p=raw.split(/\s+/);$('#cmd').value='';
  if(p[0]==='BUY'||p[0]==='SELL'){const qty=parseInt(p[1])||100;const t=(p[2]||'AAPL');post('/api/order',{side:p[0],qty:qty,ticker:t});}
  else if(p[0]==='PAGE'){page()}else if(p[0]==='FLOW'){post('/api/flow',{on:p[1]!=='OFF'&&!(p[1]===undefined&&flowOn)})}
- else if(p[0]==='RESET'){post('/api/reset')}else if(p[0]==='RECONNECT'){post('/api/reconnect')}
- else if(p[0]==='HELP'){alert('BUY|SELL <qty> <ticker> <GO>  send an order through BlazingMQ\nRECON <GO>  refresh reconciliation\nPAGE <GO>  page on-call with the SEV-2 alert\nFLOW ON|OFF <GO>  pause/resume generated order flow\nRESET <GO>  clear the blotter\nRECONNECT <GO>  reconnect engines to the broker')}
+ else if(p[0]==='RESET'){post('/api/reset')}else if(p[0]==='AUTOPAGE'){post('/api/autopage',{on:p[1]!=='OFF'})}else if(p[0]==='RECONNECT'){post('/api/reconnect')}
+ else if(p[0]==='HELP'){alert('BUY|SELL <qty> <ticker> <GO>  send an order through BlazingMQ\nRECON <GO>  refresh reconciliation\nPAGE <GO>  page on-call with the SEV-2 alert\nFLOW ON|OFF <GO>  pause/resume generated order flow\nAUTOPAGE ON|OFF <GO>  arm/disarm automatic paging on a persistent recon break\nRESET <GO>  clear the blotter\nRECONNECT <GO>  reconnect engines to the broker')}
  else{load()}}
 $('#cmd').addEventListener('keydown',e=>{if(e.key==='Enter')runCmd()});
 load();setInterval(load,1500);
