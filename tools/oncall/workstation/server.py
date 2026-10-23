@@ -368,7 +368,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--period", type=float, default=3.0, help="seconds between generated orders (0 = manual only)")
+    ap.add_argument("--paused", action="store_true", default=os.environ.get("ARGUS_FLOW_START", "on") == "off",
+                    help="start pre-open: generated order flow off until FLOW ON <GO>")
     a = ap.parse_args()
+    if a.paused:
+        S["flow"] = False
+        log_alert("INFO", "pre-open: generated order flow paused — FLOW ON <GO> to open the session")
     threading.Thread(target=market_thread, daemon=True).start()
     if broker_up():
         start_flow()
